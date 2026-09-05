@@ -2,7 +2,7 @@
 
 An AI-powered wealth intelligence dashboard for Relationship Managers. The application turns portfolio data into explainable priorities, risk insights, event-based attribution, and client-ready advisory actions.
 
-Built for SingHacks 2026 Hackathon
+## [SingHacks2026 Hackathon Challenge](https://github.com/Singhacks-2026/juliusbaer) (also located in Challenge.md file)
 
 <p>
     <img src="https://img.shields.io/badge/Platform-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white" alt="Streamlit">
@@ -13,6 +13,7 @@ Built for SingHacks 2026 Hackathon
 > [!IMPORTANT]
 > All client, portfolio, transaction, market, and RM-note data in this repository is synthetic and intended for demonstration only.
 
+
 ## Features
 
 - **Book Prioritizer**: Rank clients by urgency, risk, liquidity, mandate drift, and portfolio impact.
@@ -22,32 +23,6 @@ Built for SingHacks 2026 Hackathon
 - **Explainable analytics**: Link portfolio movements to the authoritative `event_log.csv`.
 - **Human-in-the-loop workflow**: Recommendations remain suggestions for RM review.
 
-## Architecture
-
-| Layer | Responsibility | Main implementation |
-| :--- | :--- | :--- |
-| <span style="color:#2563eb">**Client Context**</span> | Provides portfolio, mandate, risk, tax, goals, holdings, and event data. | `data/` |
-| <span style="color:#16a34a">**Analytics Engine**</span> | Computes portfolio performance, LTV, liquidity, mandate drift, concentration, P&L, and event attribution. | `src/analytics.py` |
-| <span style="color:#d97706">**Intelligence Layer**</span> | Combines deterministic analytics into monitoring, prioritisation, explanations, recommendations, and stress tests. | `engine/wealth_intelligence.py` |
-| <span style="color:#7c3aed">**AI Synthesis**</span> | Generates grounded explanations and editable advisory drafts using supplied context and the authoritative event log. | `engine/llm_synthesis.py` and `src/ai_advisor.py` |
-| <span style="color:#dc2626">**RM Workbench**</span> | Presents the book queue, client deep-dive, action hub, and audit log for human review. | `app.py` |
-
-```mermaid
-flowchart TD
-        A[Client Context] --> B[Analytics Engine]
-        B --> C[Intelligence Layer]
-        C --> D[Optional AI Synthesis]
-        D --> E[RM Intelligence Workbench]
-        E --> F[RM Review and Client Action]
-```
-
-<table>
-    <tr>
-        <td bgcolor="#eff6ff"><strong>Monitor</strong><br>Detect portfolio and client risks.</td>
-        <td bgcolor="#f0fdf4"><strong>Explain</strong><br>Connect movements to controlled event data.</td>
-        <td bgcolor="#fff7ed"><strong>Recommend</strong><br>Prepare editable actions for RM review.</td>
-    </tr>
-</table>
 
 ## Requirements
 
@@ -120,7 +95,7 @@ A successful run ends with:
 │   ├── llm_synthesis.py           # Grounded AI synthesis boundary
 │   └── wealth_intelligence.py     # Intelligence orchestration
 ├── src/
-│   ├── ai_advisor.py              # Optional Gemini integration
+│   ├── ai_advisor.py              # Gemini integration
 │   ├── analytics.py               # Core analytics
 │   ├── data_quality.py            # Data validation
 │   └── scoring.py                 # Client prioritisation
@@ -155,7 +130,6 @@ Field definitions are available in [`docs/DATA_DICTIONARY.md`](docs/DATA_DICTION
 
 ## Data and Governance
 
-- The dataset is entirely synthetic.
 - `event_log.csv` is the authoritative source for events.
 - AI responses must be grounded in supplied analytics and source records.
 - Recommendations are advisory suggestions and require RM review.
@@ -186,4 +160,4 @@ Comparing snapshots is essential for understanding portfolio changes over time.
 
 ## License
 
-This project was created for SingHacks 2026 and uses synthetic data for demonstration purposes.
+This project was created for SingHacks 2026
