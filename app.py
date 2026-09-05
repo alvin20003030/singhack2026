@@ -11,6 +11,9 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
+import json
+from datetime import datetime, timezone
+from uuid import uuid4
 
 from engine.wealth_intelligence import (
     load_intelligence_data,
@@ -54,6 +57,7 @@ from engine.llm_synthesis import (
     generate_connected_review_coaching,
     is_ai_available,
 )
+from src.ai_advisor import MODEL as AI_MODEL
 
 # ---------------------------------------------------------------------------
 # Page Config
@@ -91,6 +95,9 @@ def get_scores(_data):
 
 data = load_data()
 
+if "ai_audit_log" not in st.session_state:
+    st.session_state["ai_audit_log"] = []
+
 # ---------------------------------------------------------------------------
 # Sidebar Navigation
 # ---------------------------------------------------------------------------
@@ -102,7 +109,7 @@ st.sidebar.divider()
 
 screen = st.sidebar.radio(
     "Navigate",
-    ["PRIORITISE · Book Action Queue", "REVIEW · Client Deep-Dive", "DECIDE · CRM Action Hub"],
+    ["PRIORITISE · Book Action Queue", "REVIEW · Client Deep-Dive", "DECIDE · CRM Action Hub", "🧾 AI Audit Log"],
     index=0,
 )
 
@@ -713,6 +720,13 @@ def _render_ai_assistant_panel(
                 data["mandates"],
                 deterministic_advice,
             )
+            _record_ai_audit(
+                "AI Assistant coaching",
+                client_id,
+                detail,
+                st.session_state[coaching_key],
+                {"events": len(data["event_log"]), "source": "REVIEW client context"},
+            )
             status.update(label="AI Assistant ready", state="complete", expanded=False)
     if coaching_key in st.session_state:
         st.info(st.session_state[coaching_key])
@@ -906,6 +920,10 @@ def render_advisory_builder():
                     detail, holdings, attributions, events_df
                 )
             st.session_state[f"explanation_{client_id}"] = explanation
+            _record_ai_audit(
+                "Portfolio explanation", client_id, detail, explanation,
+                {"holdings": len(holdings), "attributions": len(attributions), "events": len(events_df)},
+            )
 
         if f"explanation_{client_id}" in st.session_state:
             st.markdown(st.session_state[f"explanation_{client_id}"])
@@ -940,6 +958,10 @@ def render_advisory_builder():
                     detail, holdings, client_drift, events_df
                 )
             st.session_state[f"rebalance_{client_id}"] = suggestion
+            _record_ai_audit(
+                "Rebalancing suggestion", client_id, detail, suggestion,
+                {"holdings": len(holdings), "mandate_rows": len(client_drift), "events": len(events_df)},
+            )
 
         if f"rebalance_{client_id}" in st.session_state:
             st.markdown(st.session_state[f"rebalance_{client_id}"])
@@ -972,6 +994,10 @@ def render_advisory_builder():
                 tax_advice = generate_tax_optimization(detail, tax_data, events_df)
             st.session_state[f"tax_{client_id}"] = tax_advice
             st.session_state[f"tax_data_{client_id}"] = tax_data
+            _record_ai_audit(
+                "Tax optimization", client_id, detail, tax_advice,
+                {"tax_domicile": detail["client"].get("tax_domicile"), "gains": tax_data.get("total_gains", 0), "losses": tax_data.get("total_losses", 0), "events": len(events_df)},
+            )
 
         if f"tax_{client_id}" in st.session_state:
             tax_data = st.session_state.get(f"tax_data_{client_id}", {})
@@ -1002,6 +1028,10 @@ def render_advisory_builder():
             with st.spinner("Building life-event transition strategy..."):
                 plan = generate_life_event_plan(detail, events_df)
             st.session_state[f"life_{client_id}"] = plan
+            _record_ai_audit(
+                "Life-event plan", client_id, detail, plan,
+                {"life_stage": detail["client"].get("life_stage"), "cash_needs": len(detail.get("cash_needs", [])), "events": len(events_df)},
+            )
 
         if f"life_{client_id}" in st.session_state:
             st.markdown(st.session_state[f"life_{client_id}"])
@@ -1031,6 +1061,10 @@ def render_advisory_builder():
             with st.spinner("Drafting client message..."):
                 msg = generate_client_message(detail, action_summary, events_df)
             st.session_state[f"msg_{client_id}"] = msg
+            _record_ai_audit(
+                "Client message", client_id, detail, msg,
+                {"action_summary": action_summary, "events": len(events_df)},
+            )
         else:
             st.warning("Please describe the action to communicate.")
 
@@ -1132,6 +1166,73 @@ def _action_color(tag: str) -> str:
     }.get(tag, "#6c757d")
 
 
+def _record_ai_audit(
+    recommendation_type: str,
+    client_id: str,
+    detail: dict,
+    output: str,
+    input_summary: dict,
+) -> str:
+    """Store session-scoped provenance for an AI-generated output."""
+    audit_id = f"AI-{uuid4().hex[:10].upper()}"
+    record = {
+        "audit_id": audit_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "recommendation_type": recommendation_type,
+        "client_id": client_id,
+        "client_name": detail["client"].get("client_name", client_id),
+        "model": AI_MODEL,
+        "ai_connected": is_ai_available(),
+        "status": "Generated" if is_ai_available() else "Fallback generated",
+        "input_summary": input_summary,
+        "event_grounded": "events" in input_summary,
+        "output": output,
+        "rm_review_status": "Pending RM review",
+    }
+    st.session_state["ai_audit_log"].insert(0, record)
+    return audit_id
+
+
+def render_ai_audit_log():
+    """Display AI generation provenance for the current browser session."""
+    st.title("🧾 AI Audit Log")
+    st.markdown("Review the provenance, grounding context, and original output for every AI generation in this session.")
+    records = st.session_state.get("ai_audit_log", [])
+    if not records:
+        st.info("No AI recommendations have been generated in this session.")
+        return
+
+    clients = sorted({record["client_name"] for record in records})
+    types = sorted({record["recommendation_type"] for record in records})
+    filter_col, type_col = st.columns(2)
+    selected_client = filter_col.selectbox("Client", ["All clients"] + clients, key="audit_client_filter")
+    selected_type = type_col.selectbox("Recommendation type", ["All types"] + types, key="audit_type_filter")
+    filtered = [
+        record for record in records
+        if (selected_client == "All clients" or record["client_name"] == selected_client)
+        and (selected_type == "All types" or record["recommendation_type"] == selected_type)
+    ]
+    st.caption(f"Showing {len(filtered)} of {len(records)} generation(s). This log is retained for this browser session only.")
+    st.download_button(
+        "Export audit log",
+        data=json.dumps(filtered, indent=2, default=str),
+        file_name="ai_audit_log.json",
+        mime="application/json",
+        key="export_ai_audit_log",
+    )
+    for record in filtered:
+        connection = "Gemini connected" if record["ai_connected"] else "Fallback mode"
+        with st.expander(f"{record['recommendation_type']} · {record['client_name']} · {record['generated_at']}"):
+            meta_col, context_col = st.columns(2)
+            meta_col.write(f"**Audit ID:** {record['audit_id']}")
+            meta_col.write(f"**Model:** {record['model']} ({connection})")
+            meta_col.write(f"**Review:** {record['rm_review_status']}")
+            context_col.write("**Input scope:**")
+            context_col.json(record["input_summary"])
+            st.markdown("**Original AI output:**")
+            st.markdown(record["output"])
+
+
 # ---------------------------------------------------------------------------
 # Main Router
 # ---------------------------------------------------------------------------
@@ -1142,6 +1243,8 @@ elif screen == "REVIEW · Client Deep-Dive":
     render_client_deep_dive()
 elif screen == "DECIDE · CRM Action Hub":
     render_decide_workspace()
+elif screen == "🧾 AI Audit Log":
+    render_ai_audit_log()
 
     render_rm_chat_assistant()
 
