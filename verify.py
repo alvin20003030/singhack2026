@@ -8,6 +8,7 @@ from src.analytics import (
     attribute_portfolio_changes, check_sustainability_breaches,
 )
 from src.scoring import compute_priority_scores
+from src.data_quality import validate_datasets, validate_and_repair
 
 print("Loading data...")
 data = load_all_data()
@@ -61,6 +62,32 @@ for a in attr[:5]:
     print(f"  {a['instrument_name']:<40s}  USD {a['mv_change_usd']:>+12,.0f}  ({a['mv_change_pct']:>+5.1f}%)  [{a['period']}]")
     for e in a['events']:
         print(f"    -> {e['event_date']}: {e['description'][:80]}...")
+
+print("\n=== DATA QUALITY REPAIR LOOP ===")
+test_data = load_all_data()
+test_data["holdings"].at[0, "market_value_local"] = 0.0
+original_value = test_data["holdings"].at[0, "market_value_local"]
+quality = validate_and_repair(test_data)
+assert quality["clean"], quality["findings"]
+assert quality["repairs"], "Expected a market-value repair"
+assert test_data["holdings"].at[0, "market_value_local"] == original_value
+expected_value = test_data["holdings"].at[0, "quantity"] * test_data["holdings"].at[0, "price_local"]
+assert quality["data"]["holdings"].at[0, "market_value_local"] == expected_value
+
+warning_data = load_all_data()
+warning_data["rm_notes"][0]["client_id"] = "CL-MISSING"
+warning_result = validate_and_repair(warning_data)
+assert any(f.code == "UNKNOWN_NOTE_CLIENT" for f in warning_result["findings"])
+assert not warning_result["repairs"]
+
+blocked_data = load_all_data()
+blocked_data["holdings"].at[0, "market_value_local"] = 0.0
+blocked_result = validate_and_repair(blocked_data, lambda _findings, _data: [{"finding_id": "wrong"}], max_iterations=2)
+assert blocked_result["repairs"] == []
+assert len(blocked_result["iterations"]) == 1
+assert any(f.code == "MARKET_VALUE_MISMATCH" for f in blocked_result["findings"])
+assert not validate_datasets(load_all_data())
+print("  Safe repair, warning preservation, and no-progress termination passed.")
 
 print("\n=== ALL TESTS PASSED ===")
 

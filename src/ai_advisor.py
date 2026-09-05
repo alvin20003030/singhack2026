@@ -6,6 +6,7 @@ tax-aware optimizations, life-event plans, and client messages.
 All prompts enforce that 2026 events MUST cite event_log.csv entries only.
 """
 
+import json
 import os
 from typing import Optional
 
@@ -193,6 +194,49 @@ def _format_attributions(attributions: list) -> str:
     return "\n".join(lines)
 
 
+def _fallback_portfolio_explanation(client_detail: dict, holdings_df: pd.DataFrame,
+                                    attributions: list) -> str:
+    """Create a useful grounded explanation when Gemini is unavailable."""
+    client = client_detail.get("client", {})
+    portfolios = client_detail.get("portfolios", pd.DataFrame())
+    client_name = client.get("client_name", "the client")
+    current_aum = float(client.get("total_aum_usd", 0) or 0)
+    lines = [
+        "### Portfolio Overview",
+        f"{client_name}'s current reported AUM is approximately ${current_aum:,.0f}.",
+    ]
+
+    if isinstance(portfolios, pd.DataFrame) and not portfolios.empty:
+        portfolio_names = ", ".join(str(name) for name in portfolios["portfolio_name"].tolist())
+        lines.append(f"The client has {len(portfolios)} portfolio(s): {portfolio_names}.")
+
+    lines.append("\n### Key Drivers")
+    if attributions:
+        for attribution in attributions[:5]:
+            events = attribution.get("events", [])
+            event_text = "; ".join(
+                f"{event['event_date']}: {event['description']}" for event in events[:2]
+            ) or "No matching event-log entry was identified."
+            lines.append(
+                f"- **{attribution['instrument_name']}** changed by "
+                f"USD {attribution['mv_change_usd']:+,.0f} "
+                f"({attribution['mv_change_pct']:+.1f}%) during {attribution['period']}. "
+                f"Relevant event context: {event_text}"
+            )
+    else:
+        lines.append("No significant position changes were identified in the available snapshots.")
+
+    lines.extend([
+        "\n### Risk Observations",
+        f"The current review covers {len(holdings_df)} holding row(s). "
+        "Mandate, concentration, liquidity, and credit metrics should be reviewed alongside this summary.",
+        "\n### Review Note",
+        "This explanation was generated from the loaded portfolio and event-log data because the AI service was unavailable. "
+        "It is for RM review and should not be treated as direct investment advice.",
+    ])
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Public Advisory Functions
 # ---------------------------------------------------------------------------
@@ -224,7 +268,13 @@ Structure your response as:
 
 IMPORTANT: Only cite events from the EVENT LOG provided. Do not reference any events not in the data."""
 
-    return _call_gemini(prompt, context)
+    if not is_ai_available():
+        return _fallback_portfolio_explanation(client_detail, holdings_df, attributions)
+
+    response = _call_gemini(prompt, context)
+    if not response or response.startswith("⚠️ AI service unavailable"):
+        return _fallback_portfolio_explanation(client_detail, holdings_df, attributions)
+    return response
 
 
 def generate_rebalancing_suggestion(
@@ -382,6 +432,48 @@ Requirements:
 Format as a ready-to-send email or message. Mark as [DRAFT — RM TO REVIEW AND EDIT BEFORE SENDING]."""
 
     return _call_gemini(prompt, context)
+
+
+def suggest_data_repairs(findings: list, data: dict) -> list:
+    """Return strictly structured repair proposals for the data-quality loop.
+
+    The validator remains authoritative: proposals are limited to flagged cells
+    and are checked against deterministic expected values before application.
+    """
+    if not findings or not _gemini_available or _client is None:
+        return []
+
+    compact_findings = []
+    for finding in findings:
+        compact_findings.append({
+            "finding_id": finding.get("finding_id"),
+            "dataset": finding.get("dataset"),
+            "row_index": finding.get("row_index"),
+            "field": finding.get("field"),
+            "message": finding.get("message"),
+            "current_value": finding.get("current_value"),
+            "expected_value": finding.get("expected_value"),
+        })
+
+    prompt = """You are reviewing small data-quality flaws in a private-bank dataset.
+Return JSON only: an object with a `repairs` array. Each item must contain:
+`finding_id`, `dataset`, `row_index`, `field`, `value`, and `rationale`.
+Only propose the exact expected_value already supplied for a finding. Do not
+invent values, rewrite rows, alter source files, or repair business decisions.
+If no repair is justified, return {"repairs": []}.
+
+FINDINGS:
+""" + json.dumps(compact_findings, default=str)
+    response = _call_gemini(prompt)
+    try:
+        text = response.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        payload = json.loads(text)
+        repairs = payload.get("repairs", [])
+        return repairs if isinstance(repairs, list) else []
+    except (AttributeError, ValueError, TypeError, json.JSONDecodeError):
+        return []
 
 
 def is_ai_available() -> bool:

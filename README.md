@@ -220,6 +220,26 @@ of the data in 30 seconds.
   bank's systems. Handling them thoughtfully counts in your favour; assuming they are absent does
   not.
 
+### Dataset quality gate
+
+The Streamlit app validates the loaded datasets before analytics and advisory screens consume them.
+Checks cover documented joins, snapshot dates, holding valuation arithmetic, portfolio weight totals,
+mandate bands, and credit-facility LTV/headroom calculations. Small, unambiguous reconciliation
+issues may be repaired in memory through a bounded loop and are recorded with their before/after
+values.
+
+The AI may suggest a structured repair, but it cannot rewrite files or arbitrary rows. Deterministic
+checks approve every proposed value before it is applied. If Gemini is unavailable, malformed, or
+cannot justify a repair, the original value is preserved. Ambiguous findings remain warnings for RM
+review. RM-note disagreement, mandate breaches, private-market valuation lag, client-directed
+choices, and missing historical tax lots are intentional domain conditions and are not auto-fixed.
+Source CSV and JSON files are never modified by this process.
+
+Every generated explanation, rebalancing suggestion, tax strategy, life-event plan, and client
+message is also recorded in the **AI Audit Log** screen. The log captures the client, generation
+time, model connection status, data-scope summary, original AI output, and RM review status. It is
+session-scoped and can be exported as JSON for review or evidence.
+
 ---
 
 ## 🧠 Intelligence Inputs
