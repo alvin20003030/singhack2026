@@ -1,0 +1,1147 @@
+"""
+RM Intelligence Workbench — Main Streamlit Application
+
+Three-screen interactive workbench for Relationship Manager Priscilla Ong:
+  1. Book Prioritizer — Ranked client list with priority scores and action tags
+  2. Client Deep-Dive — Time-series analysis with event attribution
+  3. Advisory Action Builder — AI-powered recommendations with RM edit/override
+"""
+
+import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
+import pandas as pd
+
+from engine.wealth_intelligence import (
+    load_intelligence_data,
+    analyse,
+    prioritise,
+    client_snapshot,
+    compare,
+    conflict_flags,
+    stress_test,
+    audit_action,
+    get_score_breakdown,
+    load_all_data,
+    compute_portfolio_summary,
+    compute_ltv_analysis,
+    compute_mandate_drift,
+    compute_liquidity_coverage,
+    compute_concentration_risk,
+    compute_unrealised_pnl,
+    attribute_portfolio_changes,
+    check_sustainability_breaches,
+    get_client_detail,
+    get_asset_allocation,
+    get_holdings_detail,
+    get_client_portfolio_timeseries,
+    get_tax_optimization_opportunities,
+    get_lookthrough_exposure,
+    get_client_analytics_context,
+    simulate_continuous_monitoring,
+    SNAPSHOT_DATES,
+    TODAY,
+)
+from engine.llm_synthesis import (
+    generate_portfolio_explanation,
+    generate_rebalancing_suggestion,
+    generate_tax_optimization,
+    generate_life_event_plan,
+    generate_client_message,
+    generate_rm_chat_response,
+    generate_executive_briefing,
+    generate_review_advisories,
+    generate_connected_review_coaching,
+    is_ai_available,
+)
+
+# ---------------------------------------------------------------------------
+# Page Config
+# ---------------------------------------------------------------------------
+
+st.set_page_config(
+    page_title="RM Intelligence Workbench",
+    page_icon="🏦",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+st.markdown("""
+<style>
+html, body, [class*="css"] { font-size: 16px; }
+.stage-header { padding: 0.7rem 1rem; color: white; font-size: 1.25rem; font-weight: 700; border-radius: 6px; margin-top: 1rem; }
+.stage-blue { background: #1565C0; }
+.stage-amber { background: #F57C00; }
+.stage-green { background: #2E7D32; }
+.metric-callout { font-size: 1.5rem; font-weight: 700; }
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Data Loading (cached)
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=300)
+def load_data():
+    return load_intelligence_data()
+
+@st.cache_data(ttl=300)
+def get_scores(_data):
+    return prioritise(_data)
+
+data = load_data()
+
+# ---------------------------------------------------------------------------
+# Sidebar Navigation
+# ---------------------------------------------------------------------------
+
+st.sidebar.image("https://img.icons8.com/color/96/bank-building.png", width=64)
+st.sidebar.title("RM Intelligence Workbench")
+st.sidebar.caption("Priscilla Ong · Asia Desk · 26 Aug 2026")
+st.sidebar.divider()
+
+screen = st.sidebar.radio(
+    "Navigate",
+    ["PRIORITISE · Book Action Queue", "REVIEW · Client Deep-Dive", "DECIDE · CRM Action Hub"],
+    index=0,
+)
+
+# AI status indicator
+if is_ai_available():
+    st.sidebar.success("✅ Gemini AI Connected")
+else:
+    st.sidebar.warning("⚠️ AI Offline — Add API key to .env")
+
+st.sidebar.divider()
+st.sidebar.caption("SingHacks 2026 · Julius Baer Wealth Intelligence")
+st.sidebar.caption(f"Data as of: {TODAY}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SCREEN 1: BOOK PRIORITIZER
+# ═══════════════════════════════════════════════════════════════════════════
+
+def render_book_prioritizer():
+    st.title("📊 Book Prioritizer")
+    st.markdown("Ranked view of Priscilla's 20-client book — **who to call first today.**")
+
+    scores = get_scores(data)
+    portfolio_summary = compute_portfolio_summary(data)
+
+    # --- Top-line metrics ---
+    total_aum = data["clients"]["total_aum_usd"].sum()
+    urgent_count = len(scores[scores["action_tag"] == "URGENT"])
+    review_count = len(scores[scores["action_tag"] == "REVIEW"])
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total Book AUM", f"${total_aum / 1e6:,.0f}M")
+    col2.metric("Clients", len(scores))
+    col3.metric("🔴 Urgent", urgent_count)
+    col4.metric("🟡 Review", review_count)
+
+    st.divider()
+
+    # --- Top 3 Priority Actions ---
+    st.subheader("🚨 Today's Top Priority Actions")
+    top3 = scores.head(3)
+    cols = st.columns(3)
+    for idx, (_, row) in enumerate(top3.iterrows()):
+        with cols[idx]:
+            color = _action_color(row["action_tag"])
+            st.markdown(
+                f"<div style='padding:16px; border-radius:10px; border-left: 5px solid {color}; "
+                f"background-color: {color}15;'>"
+                f"<h4 style='margin:0;'>{row['client_name']}</h4>"
+                f"<p style='margin:4px 0; font-size:28px; font-weight:bold; color:{color};'>"
+                f"{row['priority_score']}/100</p>"
+                f"<p style='margin:2px 0;'>AUM: ${row['total_aum_usd']/1e6:,.1f}M</p>"
+                f"<p style='margin:2px 0; font-size:13px;'>⚡ {row['risk_flags']}</p>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+    st.divider()
+
+    # --- Full Ranked Table ---
+    st.subheader("📋 Full Client Ranking")
+
+    # Merge with YTD performance
+    display_df = scores.merge(
+        portfolio_summary[["client_id", "ytd_change_pct", "ytd_change_abs"]],
+        on="client_id",
+        how="left",
+    )
+
+    # Format for display
+    display_df["AUM ($M)"] = display_df["total_aum_usd"].apply(lambda x: f"${x/1e6:,.1f}M")
+    display_df["YTD Change"] = display_df["ytd_change_pct"].apply(
+        lambda x: f"{'↑' if x >= 0 else '↓'} {abs(x):.1f}%"
+    )
+    display_df["Score"] = display_df["priority_score"]
+
+    # Show table
+    for _, row in display_df.iterrows():
+        color = _action_color(row["action_tag"])
+        tag_emoji = {"URGENT": "🔴", "REVIEW": "🟡", "MONITOR": "🔵", "ON TRACK": "🟢"}.get(
+            row["action_tag"], "⚪"
+        )
+
+        with st.container():
+            c1, c2, c3, c4, c5, c6 = st.columns([0.5, 2.5, 1, 1, 1, 3])
+            c1.markdown(f"**{row['Score']}**")
+            c2.markdown(f"**{row['client_name']}** · {row['client_id']}")
+            c3.markdown(f"{row['AUM ($M)']}")
+            c4.markdown(f"{row['YTD Change']}")
+            c5.markdown(f"{tag_emoji} {row['action_tag']}")
+            c6.markdown(f"_{row['risk_flags']}_")
+
+    st.divider()
+
+    # --- Score Distribution ---
+    st.subheader("📈 Score Distribution")
+    fig = px.bar(
+        scores,
+        x="client_name",
+        y="priority_score",
+        color="action_tag",
+        color_discrete_map={
+            "URGENT": "#dc3545",
+            "REVIEW": "#ffc107",
+            "MONITOR": "#0d6efd",
+            "ON TRACK": "#198754",
+        },
+        title="Client Priority Scores",
+        labels={"priority_score": "Priority Score", "client_name": "Client"},
+    )
+    fig.update_layout(xaxis_tickangle=-45, height=400)
+    st.plotly_chart(fig, width="stretch")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SCREEN 2: CLIENT DEEP-DIVE
+# ═══════════════════════════════════════════════════════════════════════════
+
+def render_three_stage_pipeline(client_id: str, detail: dict):
+    """Render the What happened -> What next -> What action workflow."""
+    holdings = get_holdings_detail(data, client_id)
+    attributions = attribute_portfolio_changes(data, client_id)
+
+    st.markdown('<div class="stage-header stage-blue">1. What Happened? (2026 Historical Attribution)</div>', unsafe_allow_html=True)
+    summary = compute_portfolio_summary(data)
+    client_summary = summary[summary["client_id"] == client_id].iloc[0]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("YTD portfolio change", f"${client_summary['ytd_change_abs'] / 1e6:+,.1f}M")
+    c2.metric("YTD change", f"{client_summary['ytd_change_pct']:+.1f}%")
+    c3.metric("Look-through positions", str(len(get_lookthrough_exposure(data, client_id))))
+    if attributions:
+        for attr in attributions[:4]:
+            event_citations = "; ".join(
+                f"{event['event_date']}: {event['description']}" for event in attr["events"]
+            )
+            st.markdown(
+                f"**{attr['instrument_name']}** changed ${attr['mv_change_usd']:+,.0f} "
+                f"({attr['mv_change_pct']:+.1f}%) in {attr['period']}.  \n"
+                f"Event-log citation: {event_citations}"
+            )
+    else:
+        st.info("No material position change matched to an event-log entry.")
+    lookthrough = get_lookthrough_exposure(data, client_id)
+    if not lookthrough.empty:
+        with st.expander("Show structured-product look-through exposure"):
+            st.dataframe(lookthrough, width="stretch", hide_index=True)
+
+    st.markdown('<div class="stage-header stage-amber">2. What Could Happen Next? (Scenario & Risk Anticipation)</div>', unsafe_allow_html=True)
+    alerts = simulate_continuous_monitoring(
+        data["clients"], data["holdings"], data["credit_facilities"],
+        data["commitments"], data["planned_cash_needs"],
+    )
+    client_alerts = [alert for alert in alerts if alert["client_id"] == client_id]
+    if client_alerts:
+        for alert in client_alerts[:5]:
+            color = "#D32F2F" if alert["severity"] == "URGENT" else "#F57C00"
+            st.markdown(f":{('red' if color == '#D32F2F' else 'orange')}[{alert['alert_type']}] {alert['message']} ({alert['snapshot_date']})")
+    else:
+        st.success("No proactive monitoring alerts across the five snapshots.")
+    scenarios = stress_test(data, client_id).rename(columns={
+        "scenario": "Scenario",
+        "projected_impact_usd": "Illustrative portfolio impact (USD)",
+        "method": "Method",
+    })
+    st.dataframe(scenarios, width="stretch", hide_index=True)
+    st.caption("Illustrative sensitivity calculated by the intelligence layer; it is not a forecast or approved advice.")
+
+    st.markdown('<div class="stage-header stage-green">3. Recommended Actions (Tax-Aware & Mandate Aligned)</div>', unsafe_allow_html=True)
+    tax_data = get_tax_optimization_opportunities(data, client_id)
+    drift = compute_mandate_drift(data)
+    client_drift = drift[drift["client_id"] == client_id] if not drift.empty else pd.DataFrame()
+    a1, a2, a3 = st.columns(3)
+    a1.metric("Unrealised losses", f"${tax_data.get('total_losses', 0):,.0f}")
+    a2.metric("Tax domicile", detail["client"].get("tax_domicile", "Unknown"))
+    a3.metric("Mandate breaches", str((client_drift["breach"] != "None").sum() if not client_drift.empty else 0))
+    notes = detail.get("rm_notes", [])
+    note_text = notes[0]["note"] if notes else "No qualitative RM note available."
+    draft_key = f"action_draft_{client_id}"
+    default_draft = (
+        "[DRAFT FOR RM REVIEW]\n"
+        f"Review mandate drift and tax-loss opportunities for {detail['client']['client_name']}. "
+        f"Coordinate any rebalance with the client's stated context: {note_text}"
+    )
+    draft = st.text_area("Editable proposed action", value=st.session_state.get(draft_key, default_draft), key=f"edit_{draft_key}", height=120)
+    st.session_state[draft_key] = draft
+    if st.button("Approve & Log to CRM", key=f"approve_{client_id}"):
+        st.session_state[f"crm_log_{client_id}"] = draft
+        st.success("Draft approved by RM and logged to the local CRM activity stream.")
+
+
+def render_client_deep_dive():
+    st.title("🔍 Client Deep-Dive")
+
+    # Client selector
+    clients = data["clients"]
+    client_options = {
+        f"{row['client_name']} ({row['client_id']}) — ${row['total_aum_usd']/1e6:,.1f}M": row["client_id"]
+        for _, row in clients.sort_values("total_aum_usd", ascending=False).iterrows()
+    }
+
+    selected_label = st.selectbox("Select Client", list(client_options.keys()))
+    client_id = client_options[selected_label]
+
+    detail = get_client_detail(data, client_id)
+    client = detail["client"]
+    score_detail = get_score_breakdown(data, client_id)
+    review_snapshot = client_snapshot(data, client_id)
+    review_attributions = attribute_portfolio_changes(data, client_id)
+
+    st.markdown("### Overview")
+    st.caption(
+        "Client situation, why it matters now, and an editable RM suggestion. Grounded in analytics.py, "
+        "clients.csv, commitments.csv, mandates.csv, planned_cash_needs.csv, rm_notes.json, "
+        "event_log.csv, and market_context.csv; no external market knowledge is used."
+    )
+    briefing = generate_executive_briefing(
+        client,
+        review_snapshot,
+        detail["rm_notes"],
+        detail["cash_needs"],
+        review_attributions,
+        detail["commitments"],
+        review_snapshot["mandate_drift"],
+    )
+    with st.container(border=True):
+        st.markdown(briefing)
+
+    # --- Client Profile Header ---
+    st.divider()
+    col1, col2, col3 = st.columns([2, 1, 1])
+
+    with col1:
+        st.subheader(f"{client['client_name']}")
+        st.markdown(
+            f"**{client.get('life_stage', '')}** · {client.get('nationality', '')} · "
+            f"Age {client.get('age', 'N/A')} · Tax Domicile: {client.get('tax_domicile', '')}"
+        )
+        st.markdown(f"**Risk Profile:** {client.get('risk_profile', '')} ({client.get('risk_tolerance_score', '')}/10)")
+        st.markdown(f"**Objectives:** {client.get('objectives', '')}")
+        st.markdown(f"**Source of Wealth:** {client.get('source_of_wealth', '')}")
+
+    with col2:
+        score = score_detail.get("priority_score", 0)
+        tag = score_detail.get("action_tag", "N/A")
+        color = _action_color(tag)
+        st.markdown(
+            f"<div style='text-align:center; padding:20px; border-radius:10px; "
+            f"background-color:{color}15; border: 2px solid {color};'>"
+            f"<p style='margin:0; font-size:14px;'>Priority Score</p>"
+            f"<p style='margin:0; font-size:48px; font-weight:bold; color:{color};'>{score}</p>"
+            f"<p style='margin:0; font-size:16px; color:{color};'>{tag}</p></div>",
+            unsafe_allow_html=True,
+        )
+
+    with col3:
+        st.metric("Total AUM", f"${client.get('total_aum_usd', 0)/1e6:,.1f}M")
+        st.metric("Booking Centre", client.get("booking_centre", ""))
+        st.metric("KYC Due", client.get("kyc_review_due", "N/A"))
+
+    render_three_stage_pipeline(client_id, detail)
+
+    conflicts = conflict_flags(data, client_id)
+    if conflicts:
+        st.warning("Qualitative / quantitative conflict review")
+        for conflict in conflicts:
+            st.markdown(f"- {conflict}")
+
+    # --- Tabs ---
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📈 Portfolio Timeline",
+        "⚖️ Asset Allocation & Mandate",
+        "📋 Holdings",
+        "🏦 Credit & Liquidity",
+        "📝 RM Notes",
+    ])
+
+    # --- Tab 1: Portfolio Timeline ---
+    with tab1:
+        st.subheader("Portfolio AUM Over Time")
+        ts = get_client_portfolio_timeseries(data, client_id)
+        if not ts.empty:
+            # Total AUM per snapshot
+            total_ts = ts.groupby("snapshot_date")["aum"].sum().reset_index()
+            total_ts = total_ts.sort_values("snapshot_date")
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=total_ts["snapshot_date"],
+                y=total_ts["aum"],
+                mode="lines+markers",
+                name="Total AUM",
+                line=dict(width=3, color="#0d6efd"),
+                marker=dict(size=10),
+            ))
+
+            # Per-portfolio lines
+            for pf_name in ts["portfolio_name"].unique():
+                pf_ts = ts[ts["portfolio_name"] == pf_name].sort_values("snapshot_date")
+                fig.add_trace(go.Scatter(
+                    x=pf_ts["snapshot_date"],
+                    y=pf_ts["aum"],
+                    mode="lines+markers",
+                    name=pf_name,
+                    line=dict(width=1, dash="dot"),
+                    marker=dict(size=6),
+                ))
+
+            # Event annotations
+            events = data["event_log"]
+            for _, evt in events[events["severity"].isin(["Severe", "High"])].iterrows():
+                evt_date = evt["event_date"]
+                closest_snap = min(SNAPSHOT_DATES, key=lambda d: abs(
+                    pd.Timestamp(d) - pd.Timestamp(evt_date)
+                ))
+                snap_aum = total_ts[total_ts["snapshot_date"] == closest_snap]
+                if not snap_aum.empty:
+                    fig.add_annotation(
+                        x=closest_snap,
+                        y=snap_aum.iloc[0]["aum"],
+                        text=evt["description"][:50] + "...",
+                        showarrow=True,
+                        arrowhead=2,
+                        font=dict(size=9),
+                        bgcolor="rgba(255,255,255,0.8)",
+                    )
+
+            fig.update_layout(
+                height=450,
+                title="AUM Across 5 Snapshots with Key Events",
+                xaxis_title="Snapshot Date",
+                yaxis_title=f"AUM ({ts.iloc[0]['base_currency'] if not ts.empty else 'USD'})",
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig, width="stretch")
+
+        # Event Attribution
+        st.subheader("🔗 Event Attribution — What Drove Changes")
+        attributions = attribute_portfolio_changes(data, client_id)
+        if attributions:
+            for attr in attributions[:10]:
+                change_emoji = "📈" if attr["mv_change_usd"] > 0 else "📉"
+                with st.expander(
+                    f"{change_emoji} {attr['instrument_name']} — "
+                    f"USD {attr['mv_change_usd']:+,.0f} ({attr['mv_change_pct']:+.1f}%) "
+                    f"[{attr['period']}]"
+                ):
+                    for evt in attr["events"]:
+                        sev_color = {"Severe": "🔴", "High": "🟠", "Medium": "🟡"}.get(
+                            evt["severity"], "⚪"
+                        )
+                        st.markdown(
+                            f"{sev_color} **{evt['event_date']}** [{evt['severity']}]: "
+                            f"{evt['description']}"
+                        )
+                        st.caption(f"Transmission: {evt['transmission']}")
+        else:
+            st.info("No significant attributable changes detected.")
+
+    # --- Tab 2: Asset Allocation & Mandate ---
+    with tab2:
+        st.subheader("Asset Allocation vs Mandate Bands")
+
+        alloc = get_asset_allocation(data, client_id)
+        drift = compute_mandate_drift(data)
+        client_drift = drift[drift["client_id"] == client_id] if not drift.empty else pd.DataFrame()
+
+        if not alloc.empty:
+            col_a, col_b = st.columns([1, 1])
+
+            with col_a:
+                fig = px.pie(
+                    alloc,
+                    values="market_value_usd",
+                    names="asset_class",
+                    title="Current Asset Allocation",
+                    color_discrete_sequence=px.colors.qualitative.Set2,
+                )
+                fig.update_layout(height=350)
+                st.plotly_chart(fig, width="stretch")
+
+            with col_b:
+                if not client_drift.empty:
+                    fig = go.Figure()
+                    for _, d in client_drift.iterrows():
+                        color = "#dc3545" if d["breach"] != "None" else "#198754"
+                        fig.add_trace(go.Bar(
+                            name=d["asset_class"],
+                            x=[d["asset_class"]],
+                            y=[d["actual_weight_pct"]],
+                            marker_color=color,
+                            text=[f"{d['actual_weight_pct']:.1f}%"],
+                            textposition="outside",
+                        ))
+                        # Mandate band as error bars area
+                        fig.add_shape(
+                            type="rect",
+                            x0=d["asset_class"],
+                            x1=d["asset_class"],
+                            y0=d["min_pct"],
+                            y1=d["max_pct"],
+                            line=dict(color="rgba(0,0,0,0.3)", width=2, dash="dash"),
+                            fillcolor="rgba(0,100,200,0.05)",
+                            xref=f"x",
+                            yref="y",
+                        )
+
+                    fig.update_layout(
+                        title="Actual vs Mandate Bands",
+                        height=350,
+                        showlegend=False,
+                        yaxis_title="Weight (%)",
+                    )
+                    st.plotly_chart(fig, width="stretch")
+                else:
+                    st.info("No mandate data (custody account or no active mandate).")
+
+        # Mandate breaches table
+        if not client_drift.empty:
+            breaches = client_drift[client_drift["breach"] != "None"]
+            if not breaches.empty:
+                st.warning(f"⚠️ {len(breaches)} mandate breach(es) detected")
+                st.dataframe(
+                    breaches[["portfolio_name", "asset_class", "actual_weight_pct",
+                              "min_pct", "max_pct", "breach", "breach_amount_pct"]],
+                    width="stretch",
+                    hide_index=True,
+                )
+            else:
+                st.success("✅ All asset classes within mandate bands")
+
+    # --- Tab 3: Holdings ---
+    with tab3:
+        st.subheader("Current Holdings")
+        holdings = get_holdings_detail(data, client_id)
+        if not holdings.empty:
+            display_h = holdings[[
+                "portfolio_id", "instrument_name", "asset_class", "weight_pct",
+                "market_value_usd", "unrealised_pnl_base", "unrealised_pnl_pct",
+                "liquidity_tier",
+            ]].copy()
+            display_h.columns = [
+                "Portfolio", "Instrument", "Asset Class", "Weight %",
+                "MV (USD)", "Unrealised P&L", "P&L %", "Liquidity",
+            ]
+            display_h["MV (USD)"] = display_h["MV (USD)"].apply(lambda x: f"${x:,.0f}")
+            display_h["Unrealised P&L"] = display_h["Unrealised P&L"].apply(
+                lambda x: f"{'+'if x>0 else ''}{x:,.0f}"
+            )
+            display_h["P&L %"] = display_h["P&L %"].apply(lambda x: f"{x:+.1f}%")
+            display_h["Weight %"] = display_h["Weight %"].apply(lambda x: f"{x:.1f}%")
+            st.dataframe(display_h, width="stretch", hide_index=True, height=500)
+
+        # Concentration warnings
+        conc = compute_concentration_risk(data)
+        if not conc.empty:
+            client_conc = conc[(conc["client_id"] == client_id) & (conc["is_breach"])]
+            if not client_conc.empty:
+                st.warning("⚠️ Concentration Limit Breaches")
+                for _, c in client_conc.iterrows():
+                    underlying = c.get("underlying_reference", "")
+                    look_through = f" | **Look-through:** {underlying}" if underlying else ""
+                    st.markdown(
+                        f"- **{c['instrument_name']}**: {c['weight_pct']:.1f}% "
+                        f"(limit: {c['max_single_position_pct']:.0f}%){look_through}"
+                    )
+
+    # --- Tab 4: Credit & Liquidity ---
+    with tab4:
+        st.subheader("Credit Facilities")
+        facilities = detail["facilities"]
+        if not facilities.empty:
+            for _, fac in facilities.iterrows():
+                ltv_col = f"ltv_pct_{TODAY}"
+                current_ltv = fac.get(ltv_col, 0)
+                trigger = fac["margin_call_ltv_pct"]
+                headroom = trigger - current_ltv
+
+                st.markdown(
+                    f"**{fac['facility_id']}** — {fac['facility_type']} "
+                    f"({fac['facility_ccy']} {fac['credit_limit']:,.0f})"
+                )
+
+                # LTV Gauge
+                gauge_color = "#198754" if headroom > 10 else ("#ffc107" if headroom > 3 else "#dc3545")
+                fig = go.Figure(go.Indicator(
+                    mode="gauge+number+delta",
+                    value=current_ltv,
+                    delta={"reference": trigger, "decreasing": {"color": "#198754"}},
+                    gauge={
+                        "axis": {"range": [0, 100]},
+                        "bar": {"color": gauge_color},
+                        "steps": [
+                            {"range": [0, trigger * 0.7], "color": "#d4edda"},
+                            {"range": [trigger * 0.7, trigger * 0.9], "color": "#fff3cd"},
+                            {"range": [trigger * 0.9, 100], "color": "#f8d7da"},
+                        ],
+                        "threshold": {
+                            "line": {"color": "red", "width": 4},
+                            "thickness": 0.75,
+                            "value": trigger,
+                        },
+                    },
+                    title={"text": f"Current LTV vs Trigger ({trigger}%)"},
+                    number={"suffix": "%"},
+                ))
+                fig.update_layout(height=280)
+                st.plotly_chart(fig, width="stretch")
+
+                # LTV History
+                ltv_history = []
+                for date in SNAPSHOT_DATES:
+                    ltv_val = fac.get(f"ltv_pct_{date}", None)
+                    if ltv_val is not None:
+                        ltv_history.append({"Date": date, "LTV %": ltv_val})
+
+                if ltv_history:
+                    ltv_df = pd.DataFrame(ltv_history)
+                    fig2 = px.line(
+                        ltv_df, x="Date", y="LTV %",
+                        title="LTV History Across Snapshots",
+                        markers=True,
+                    )
+                    fig2.add_hline(
+                        y=trigger, line_dash="dash", line_color="red",
+                        annotation_text=f"Margin Call Trigger ({trigger}%)",
+                    )
+                    fig2.update_layout(height=300)
+                    st.plotly_chart(fig2, width="stretch")
+
+                st.divider()
+        else:
+            st.info("No credit facilities for this client.")
+
+        # Liquidity Coverage
+        st.subheader("Liquidity Coverage Analysis")
+        liquidity = compute_liquidity_coverage(data)
+        client_liq = liquidity[liquidity["client_id"] == client_id]
+        if not client_liq.empty:
+            liq = client_liq.iloc[0]
+            lc1, lc2, lc3, lc4 = st.columns(4)
+            lc1.metric("Daily Liquid", f"${liq['daily_liquid_usd']/1e6:,.1f}M")
+            lc2.metric("Near-Term Needs", f"${liq['near_term_needs_usd']/1e6:,.1f}M")
+            lc3.metric("Uncalled Commitments", f"${liq['uncalled_commitments_usd']/1e6:,.1f}M")
+            lc4.metric(
+                "Coverage Ratio",
+                f"{liq['coverage_ratio']:.1f}x" if liq['coverage_ratio'] < 100 else "✅ No obligations",
+                delta="Stressed" if liq['is_stressed'] else "OK",
+                delta_color="inverse" if liq['is_stressed'] else "normal",
+            )
+
+            # Cash needs detail
+            cn = detail["cash_needs"]
+            if not cn.empty:
+                st.markdown("**Planned Cash Needs:**")
+                st.dataframe(cn[["description", "currency", "amount", "due_from", "due_to", "certainty"]],
+                             use_container_width=True, hide_index=True)
+
+    # --- Tab 5: RM Notes ---
+    with tab5:
+        st.subheader("Priscilla's Notes")
+        notes = detail["rm_notes"]
+        if notes:
+            for note in sorted(notes, key=lambda n: n["note_date"], reverse=True):
+                with st.expander(f"📝 {note['note_date']} — {note['channel']}"):
+                    st.markdown(note["note"])
+        else:
+            st.info("No RM notes for this client.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ISOLATED REVIEW PAGE
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _review_advisory_box(text: str, warning: bool = False):
+    """Render an imperative, RM-facing action box."""
+    if warning:
+        st.warning(text)
+    else:
+        st.info(text)
+
+
+@st.fragment
+def _render_ai_assistant_panel(
+    client_id: str,
+    client: dict,
+    snapshot: dict,
+    detail: dict,
+    deterministic_advice: str,
+):
+    """Run the slow AI request in isolation so the REVIEW page stays visible."""
+    st.markdown("### AI Assistant")
+    st.caption(
+        "Generate the deeper action plan when needed; the rest of the REVIEW page remains available while it runs."
+    )
+    coaching_key = f"connected_review_coaching_{client_id}"
+    if st.button("Generate AI Assistant guidance", key=f"generate_{coaching_key}"):
+        with st.status("AI Assistant is preparing grounded RM coaching...", expanded=True) as status:
+            st.write("Reviewing the client's calculated portfolio context and source citations...")
+            st.session_state[coaching_key] = generate_connected_review_coaching(
+                client,
+                snapshot,
+                detail,
+                data["event_log"],
+                data["market_context"],
+                data["transactions"],
+                data["instruments"],
+                data["portfolios"],
+                data["mandates"],
+                deterministic_advice,
+            )
+            status.update(label="AI Assistant ready", state="complete", expanded=False)
+    if coaching_key in st.session_state:
+        st.info(st.session_state[coaching_key])
+    else:
+        st.info("AI Assistant guidance is ready to generate without delaying the page.")
+
+
+def render_client_deep_dive():
+    """Render the isolated two-part REVIEW page only."""
+    st.title("REVIEW · Client Deep-Dive")
+    clients = data["clients"]
+    client_options = {
+        f"{row['client_name']} ({row['client_id']})": row["client_id"]
+        for _, row in clients.sort_values("total_aum_usd", ascending=False).iterrows()
+    }
+    selected_label = st.selectbox("Select client", list(client_options), key="review_client")
+    client_id = client_options[selected_label]
+    detail = get_client_detail(data, client_id)
+    client = detail["client"]
+    snapshot = client_snapshot(data, client_id)
+    analysis = snapshot
+    attributions = attribute_portfolio_changes(data, client_id)
+    score = get_score_breakdown(data, client_id)
+    advisories = generate_review_advisories(
+        client,
+        snapshot,
+        detail,
+        data["event_log"],
+        data["market_context"],
+        data["transactions"],
+        data["instruments"],
+        data["portfolios"],
+        data["mandates"],
+        include_connected_ai=False,
+    )
+
+    # Part A: concise executive briefing.
+    st.markdown("## Part A · Executive briefing")
+    summary = snapshot["summary"]
+    total_aum = float(client.get("total_aum_usd", 0))
+    current_ltv = float(snapshot["ltv"]["current_ltv"].max()) if not snapshot["ltv"].empty else 0.0
+    ltv_trigger = float(snapshot["ltv"]["margin_call_ltv_pct"].min()) if not snapshot["ltv"].empty else 0.0
+    liquidity_stressed = bool(
+        not snapshot["liquidity"].empty and snapshot["liquidity"].iloc[0].get("is_stressed", False)
+    )
+    metric_cols = st.columns(3)
+    metric_cols[0].metric("Total AUM", f"${total_aum / 1e6:,.1f}M")
+    metric_cols[1].metric("Current LTV risk", f"{current_ltv:.1f}%" if current_ltv else "No facility")
+    metric_cols[2].metric("Priority score", f"{score.get('priority_score', 0):.0f}/100")
+
+    briefing = generate_executive_briefing(
+        client,
+        snapshot,
+        detail["rm_notes"],
+        detail["cash_needs"],
+        attributions,
+        detail["commitments"],
+        snapshot["mandate_drift"],
+    )
+    with st.container(border=True):
+        st.markdown(briefing)
+        badges = ["[VERIFIED BANK DATA]"]
+        if current_ltv and ltv_trigger and current_ltv >= ltv_trigger:
+            badges.append("[NEEDS RM RESEARCH: COLLATERAL]")
+        if not snapshot["mandate_drift"].empty and (snapshot["mandate_drift"]["breach"] != "None").any():
+            badges.append("[NEEDS RM RESEARCH: MANDATE]")
+        st.markdown(" ".join(f"`{badge}`" for badge in badges))
+
+    _render_ai_assistant_panel(
+        client_id,
+        client,
+        snapshot,
+        detail,
+        advisories["performance"],
+    )
+
+    # Part B: modular evidence with an imperative action at the bottom of each section.
+    st.markdown("## Part B · Evidence and advisory actions")
+    with st.expander("1. Portfolio performance, look-through & event attribution", expanded=True):
+        ts = get_client_portfolio_timeseries(data, client_id)
+        if not ts.empty:
+            total_ts = ts.groupby("snapshot_date", as_index=False)["aum"].sum().sort_values("snapshot_date")
+            fig = px.line(total_ts, x="snapshot_date", y="aum", markers=True, title="Wealth across five snapshots")
+            fig.update_layout(height=330, yaxis_title="AUM (USD)")
+            st.plotly_chart(fig, width="stretch")
+        lookthrough = snapshot["lookthrough"]
+        if not lookthrough.empty:
+            st.dataframe(lookthrough, width="stretch", hide_index=True)
+        for attr in attributions[:4]:
+            events = "; ".join(f"{event['event_date']}: {event['description']}" for event in attr["events"])
+            st.caption(f"{attr['instrument_name']}: {attr['mv_change_usd']:+,.0f} | {events}")
+        _review_advisory_box(advisories["performance"])
+
+    with st.expander("2. Credit facilities, collateral & Lombard LTV", expanded=True):
+        facilities = detail["facilities"]
+        if not facilities.empty:
+            rows = []
+            for _, facility in facilities.iterrows():
+                for date in SNAPSHOT_DATES:
+                    rows.append({
+                        "Facility": facility["facility_id"],
+                        "Date": date,
+                        "Drawn": facility.get(f"drawn_{date}", 0),
+                        "LTV %": facility.get(f"ltv_pct_{date}", 0),
+                        "Trigger %": facility["margin_call_ltv_pct"],
+                        "Headroom %": facility.get(f"headroom_{date}", 0),
+                    })
+            ltv_history = pd.DataFrame(rows)
+            st.dataframe(ltv_history, width="stretch", hide_index=True)
+            fig = px.line(ltv_history, x="Date", y="LTV %", color="Facility", markers=True, title="LTV progression")
+            st.plotly_chart(fig, width="stretch")
+        else:
+            st.info("No credit facilities recorded.")
+        _review_advisory_box(advisories["credit"], warning=current_ltv and ltv_trigger and current_ltv >= ltv_trigger)
+
+    with st.expander("3. Liquidity, private-market commitments & planned cash needs", expanded=True):
+        if not snapshot["liquidity"].empty:
+            st.dataframe(snapshot["liquidity"], width="stretch", hide_index=True)
+        if not detail["cash_needs"].empty:
+            st.markdown("**Planned cash needs**")
+            st.dataframe(detail["cash_needs"], width="stretch", hide_index=True)
+        if not detail["commitments"].empty:
+            st.markdown("**Uncalled commitments**")
+            st.dataframe(detail["commitments"], width="stretch", hide_index=True)
+        client_transactions = data["transactions"][data["transactions"]["client_id"] == client_id]
+        if not client_transactions.empty:
+            st.markdown("**Recent cash-flow transactions**")
+            st.dataframe(client_transactions.tail(12), width="stretch", hide_index=True)
+        _review_advisory_box(advisories["liquidity"], warning=liquidity_stressed)
+
+    with st.expander("4. Mandate governance & tax-aware optimisation", expanded=True):
+        comparison = compare(data, client_id)
+        st.dataframe(comparison, width="stretch", hide_index=True)
+        tax_data = get_tax_optimization_opportunities(data, client_id)
+        st.caption(f"Tax domicile: {client.get('tax_domicile', 'Not recorded')} | Loss positions: {len(tax_data.get('losses', []))} | Gain positions: {len(tax_data.get('gains', []))}")
+        _review_advisory_box(advisories["mandate"], warning=not snapshot["mandate_drift"].empty and (snapshot["mandate_drift"]["breach"] != "None").any())
+
+    with st.expander("5. Qualitative notes, life events & succession planning", expanded=True):
+        st.markdown(f"**Life stage:** {client.get('life_stage', 'Not recorded')}  ")
+        st.markdown(f"**Source of wealth:** {client.get('source_of_wealth', 'Not recorded')}  ")
+        st.markdown(f"**Objectives:** {client.get('objectives', 'Not recorded')}")
+        for note in sorted(detail["rm_notes"], key=lambda item: item.get("note_date", ""), reverse=True):
+            st.markdown(f"- **{note.get('note_date', 'Undated')}:** {note.get('note', '')}")
+        _review_advisory_box(advisories["qualitative"])
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SCREEN 3: ADVISORY ACTION BUILDER
+# ═══════════════════════════════════════════════════════════════════════════
+
+def render_advisory_builder():
+    st.title("💡 Advisory Action Builder")
+    st.markdown(
+        "AI-powered recommendations grounded in event data — "
+        "**every suggestion is for RM review and override.**"
+    )
+
+    # Client selector
+    clients = data["clients"]
+    scores = get_scores(data)
+    scored_options = {
+        f"[{row['action_tag']}] {row['client_name']} ({row['client_id']}) — Score: {row['priority_score']}": row["client_id"]
+        for _, row in scores.iterrows()
+    }
+
+    selected_label = st.selectbox("Select Client", list(scored_options.keys()))
+    client_id = scored_options[selected_label]
+
+    detail = get_client_detail(data, client_id)
+    holdings = get_holdings_detail(data, client_id)
+    events_df = data["event_log"]
+
+    st.divider()
+
+    # Advisory tabs
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 Portfolio Explanation",
+        "⚖️ Rebalancing Suggestions",
+        "💰 Tax-Aware Optimization",
+        "🎯 Life-Event Planning",
+    ])
+
+    # --- Tab 1: Portfolio Explanation ---
+    with tab1:
+        st.subheader("📊 AI Portfolio Explanation")
+        st.caption("Grounded in event_log.csv — only cites auditable market events")
+
+        if st.button("🔄 Generate Explanation", key="gen_explain"):
+            with st.spinner("Analyzing portfolio changes and attributing to events..."):
+                attributions = attribute_portfolio_changes(data, client_id)
+                explanation = generate_portfolio_explanation(
+                    detail, holdings, attributions, events_df
+                )
+            st.session_state[f"explanation_{client_id}"] = explanation
+
+        if f"explanation_{client_id}" in st.session_state:
+            st.markdown(st.session_state[f"explanation_{client_id}"])
+
+            st.divider()
+            st.markdown("**✏️ RM Edit / Override:**")
+            edited = st.text_area(
+                "Edit the explanation before sharing with client:",
+                value=st.session_state[f"explanation_{client_id}"],
+                height=200,
+                key=f"edit_explain_{client_id}",
+            )
+            if st.button("✅ Approve Edited Version", key=f"approve_explain_{client_id}"):
+                audit_action(
+                    client_id,
+                    st.session_state[f"explanation_{client_id}"],
+                    edited,
+                    "PORTFOLIO_EXPLANATION",
+                )
+                st.success("✅ Explanation approved and saved for client communication.")
+
+    # --- Tab 2: Rebalancing Suggestions ---
+    with tab2:
+        st.subheader("⚖️ AI Rebalancing Suggestions")
+        st.caption("Respects mandate bands, risk profile, and client objectives")
+
+        if st.button("🔄 Generate Rebalancing Plan", key="gen_rebalance"):
+            with st.spinner("Analyzing mandate drift and generating rebalancing proposals..."):
+                drift = compute_mandate_drift(data)
+                client_drift = drift[drift["client_id"] == client_id] if not drift.empty else pd.DataFrame()
+                suggestion = generate_rebalancing_suggestion(
+                    detail, holdings, client_drift, events_df
+                )
+            st.session_state[f"rebalance_{client_id}"] = suggestion
+
+        if f"rebalance_{client_id}" in st.session_state:
+            st.markdown(st.session_state[f"rebalance_{client_id}"])
+
+            st.divider()
+            st.markdown("**✏️ RM Edit / Override:**")
+            edited = st.text_area(
+                "Modify the rebalancing suggestions:",
+                value=st.session_state[f"rebalance_{client_id}"],
+                height=200,
+                key=f"edit_rebalance_{client_id}",
+            )
+            if st.button("✅ Approve Rebalancing Plan", key=f"approve_rebal_{client_id}"):
+                audit_action(
+                    client_id,
+                    st.session_state[f"rebalance_{client_id}"],
+                    edited,
+                    "REBALANCING_PROPOSAL",
+                )
+                st.success("✅ Rebalancing plan approved for implementation.")
+
+    # --- Tab 3: Tax-Aware Optimization ---
+    with tab3:
+        st.subheader("💰 Tax-Aware Optimization")
+        st.caption("Based on unrealised P&L and tax domicile")
+
+        if st.button("🔄 Generate Tax Strategy", key="gen_tax"):
+            with st.spinner("Analyzing unrealised P&L and tax domicile..."):
+                tax_data = get_tax_optimization_opportunities(data, client_id)
+                tax_advice = generate_tax_optimization(detail, tax_data, events_df)
+            st.session_state[f"tax_{client_id}"] = tax_advice
+            st.session_state[f"tax_data_{client_id}"] = tax_data
+
+        if f"tax_{client_id}" in st.session_state:
+            tax_data = st.session_state.get(f"tax_data_{client_id}", {})
+
+            # Summary metrics
+            tc1, tc2, tc3 = st.columns(3)
+            tc1.metric("Total Unrealised Gains", f"${tax_data.get('total_gains', 0):,.0f}")
+            tc2.metric("Total Unrealised Losses", f"${tax_data.get('total_losses', 0):,.0f}")
+            tc3.metric("Net Unrealised P&L", f"${tax_data.get('net_pnl', 0):,.0f}")
+
+            st.markdown(st.session_state[f"tax_{client_id}"])
+
+            st.divider()
+            st.markdown("**✏️ RM Edit / Override:**")
+            edited = st.text_area(
+                "Modify the tax strategy:",
+                value=st.session_state[f"tax_{client_id}"],
+                height=200,
+                key=f"edit_tax_{client_id}",
+            )
+
+    # --- Tab 4: Life-Event Planning ---
+    with tab4:
+        st.subheader("🎯 Life-Event Wealth Planning")
+        st.caption("Structured strategies for retirement, succession, philanthropy, education")
+
+        if st.button("🔄 Generate Life-Event Plan", key="gen_life"):
+            with st.spinner("Building life-event transition strategy..."):
+                plan = generate_life_event_plan(detail, events_df)
+            st.session_state[f"life_{client_id}"] = plan
+
+        if f"life_{client_id}" in st.session_state:
+            st.markdown(st.session_state[f"life_{client_id}"])
+
+            st.divider()
+            st.markdown("**✏️ RM Edit / Override:**")
+            edited = st.text_area(
+                "Modify the life-event plan:",
+                value=st.session_state[f"life_{client_id}"],
+                height=200,
+                key=f"edit_life_{client_id}",
+            )
+
+    # --- Client Message Generator ---
+    st.divider()
+    st.subheader("✉️ Draft Client Message")
+    st.caption("AI drafts a message for Priscilla to review, edit, and send")
+
+    action_summary = st.text_area(
+        "Describe the action or insight to communicate to the client:",
+        placeholder="e.g., Schedule a meeting to discuss portfolio rebalancing and upcoming cash needs...",
+        key=f"msg_action_{client_id}",
+    )
+
+    if st.button("📧 Generate Draft Message", key=f"gen_msg_{client_id}"):
+        if action_summary:
+            with st.spinner("Drafting client message..."):
+                msg = generate_client_message(detail, action_summary, events_df)
+            st.session_state[f"msg_{client_id}"] = msg
+        else:
+            st.warning("Please describe the action to communicate.")
+
+    if f"msg_{client_id}" in st.session_state:
+        st.markdown("---")
+        st.markdown("**📧 Draft Message:**")
+        edited_msg = st.text_area(
+            "Review and edit before sending:",
+            value=st.session_state[f"msg_{client_id}"],
+            height=250,
+            key=f"edit_msg_{client_id}",
+        )
+        if st.button("✅ Approve & Mark Ready to Send", key=f"approve_msg_{client_id}"):
+            audit_action(
+                client_id,
+                st.session_state[f"msg_{client_id}"],
+                edited_msg,
+                "CLIENT_OUTREACH",
+            )
+            st.success("✅ Message approved and ready for dispatch.")
+
+
+def render_rm_chat_assistant():
+    """Interactive, client-aware RM practice and outreach assistant."""
+    st.title("💬 RM Chat Assistant")
+    st.caption("Grounded in the selected client's holdings, RM notes, credit, and event-log citations. All outputs require RM review.")
+    clients = data["clients"]
+    options = {
+        f"{row['client_name']} ({row['client_id']})": row["client_id"]
+        for _, row in clients.sort_values("client_name").iterrows()
+    }
+    selected = st.selectbox("Client context", list(options), key="chat_client")
+    client_id = options[selected]
+    mode = st.segmented_control(
+        "Chat mode",
+        ["Simulate Client Meeting", "Client Outreach Generator"],
+        default="Simulate Client Meeting",
+        key="chat_mode",
+    )
+    mode = mode or "Simulate Client Meeting"
+    quick_prompts = [
+        "Draft meeting prep briefing",
+        "Explain portfolio drop using event_log.csv",
+        "Suggest tax-loss harvesting strategy",
+        "Simulate client objection on bond losses",
+    ]
+    selected_prompt = st.pills("Quick prompts", quick_prompts, key="chat_quick_prompt")
+    if selected_prompt:
+        st.session_state["pending_chat_prompt"] = selected_prompt
+
+    history_key = f"chat_messages_{client_id}"
+    if history_key not in st.session_state:
+        st.session_state[history_key] = []
+    for message in st.session_state[history_key]:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    prompt = st.chat_input("Ask about this client's portfolio or draft a client conversation")
+    prompt = prompt or st.session_state.pop("pending_chat_prompt", None)
+    if prompt:
+        detail = get_client_detail(data, client_id)
+        holdings = get_holdings_detail(data, client_id)
+        attributions = attribute_portfolio_changes(data, client_id)
+        analytics_context = get_client_analytics_context(data, client_id)
+        st.session_state[history_key].append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        with st.chat_message("assistant"):
+            with st.status("Grounding response", expanded=False):
+                response = generate_rm_chat_response(
+                    detail,
+                    holdings,
+                    attributions,
+                    data["event_log"],
+                    prompt,
+                    mode,
+                    analytics_context,
+                )
+            st.markdown(response)
+        st.session_state[history_key].append({"role": "assistant", "content": response})
+
+
+def render_decide_workspace():
+    st.title("DECIDE · RM Action Hub")
+    st.caption("Review, edit, approve, and audit AI-generated drafts before any client outreach or trade action.")
+    render_advisory_builder()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _action_color(tag: str) -> str:
+    return {
+        "URGENT": "#dc3545",
+        "REVIEW": "#ffc107",
+        "MONITOR": "#0d6efd",
+        "ON TRACK": "#198754",
+    }.get(tag, "#6c757d")
+
+
+# ---------------------------------------------------------------------------
+# Main Router
+# ---------------------------------------------------------------------------
+
+if screen == "PRIORITISE · Book Action Queue":
+    render_book_prioritizer()
+elif screen == "REVIEW · Client Deep-Dive":
+    render_client_deep_dive()
+elif screen == "DECIDE · CRM Action Hub":
+    render_decide_workspace()
+
+    render_rm_chat_assistant()
+
