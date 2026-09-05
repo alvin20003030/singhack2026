@@ -2,7 +2,16 @@
 
 An AI-powered wealth intelligence dashboard for Relationship Managers. The application turns portfolio data into explainable priorities, risk insights, event-based attribution, and client-ready advisory actions.
 
-Built for SingHacks2026 Hackathon
+Built for SingHacks 2026 Hackathon
+
+<p>
+    <img src="https://img.shields.io/badge/Platform-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white" alt="Streamlit">
+    <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.10 or newer">
+    <img src="https://img.shields.io/badge/AI-Gemini-4285F4?style=for-the-badge&logo=google&logoColor=white" alt="Google Gemini">
+</p>
+
+> [!IMPORTANT]
+> All client, portfolio, transaction, market, and RM-note data in this repository is synthetic and intended for demonstration only.
 
 ## Features
 
@@ -15,25 +24,30 @@ Built for SingHacks2026 Hackathon
 
 ## Architecture
 
-┌──────────────────────────────────────────────────────────────┐
-│                       Client Context                         │
-│  Portfolio • Mandate • Risk Profile • Tax • Goals • Events   │
-└────────────────────────────┬─────────────────────────────────┘
-                             ↓
-┌──────────────────────────────────────────────────────────────┐
-│                  AI Wealth Intelligence Layer                │
-│   Monitor • Analyse • Explain • Recommend • Stress Test      │
-└────────────────────────────┬─────────────────────────────────┘
-                             ↓
-┌──────────────────────────────────────────────────────────────┐
-│                   RM Intelligence Workbench                  │
-│      Prioritise • Review • Prepare • Compare • Decide        │
-└────────────────────────────┬─────────────────────────────────┘
-                             ↓
-┌──────────────────────────────────────────────────────────────┐
-│                    Client Advisory Action                    │
-│              Discuss • Rebalance • Plan • Act                │
-└──────────────────────────────────────────────────────────────┘
+| Layer | Responsibility | Main implementation |
+| :--- | :--- | :--- |
+| <span style="color:#2563eb">**Client Context**</span> | Provides portfolio, mandate, risk, tax, goals, holdings, and event data. | `data/` |
+| <span style="color:#16a34a">**Analytics Engine**</span> | Computes portfolio performance, LTV, liquidity, mandate drift, concentration, P&L, and event attribution. | `src/analytics.py` |
+| <span style="color:#d97706">**Intelligence Layer**</span> | Combines deterministic analytics into monitoring, prioritisation, explanations, recommendations, and stress tests. | `engine/wealth_intelligence.py` |
+| <span style="color:#7c3aed">**AI Synthesis**</span> | Generates grounded explanations and editable advisory drafts using supplied context and the authoritative event log. | `engine/llm_synthesis.py` and `src/ai_advisor.py` |
+| <span style="color:#dc2626">**RM Workbench**</span> | Presents the book queue, client deep-dive, action hub, and audit log for human review. | `app.py` |
+
+```mermaid
+flowchart TD
+        A[Client Context] --> B[Analytics Engine]
+        B --> C[Intelligence Layer]
+        C --> D[Optional AI Synthesis]
+        D --> E[RM Intelligence Workbench]
+        E --> F[RM Review and Client Action]
+```
+
+<table>
+    <tr>
+        <td bgcolor="#eff6ff"><strong>Monitor</strong><br>Detect portfolio and client risks.</td>
+        <td bgcolor="#f0fdf4"><strong>Explain</strong><br>Connect movements to controlled event data.</td>
+        <td bgcolor="#fff7ed"><strong>Recommend</strong><br>Prepare editable actions for RM review.</td>
+    </tr>
+</table>
 
 ## Requirements
 
