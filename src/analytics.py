@@ -690,13 +690,14 @@ def attribute_portfolio_changes(data: dict, client_id: str) -> list[dict]:
         h_from = client_holdings[client_holdings["snapshot_date"] == date_from]
         h_to = client_holdings[client_holdings["snapshot_date"] == date_to]
 
+        # Aggregate by instrument_id across all portfolios
+        h_from_agg = h_from.groupby("instrument_id")["market_value_usd"].sum().reset_index()
+        h_to_agg = h_to.groupby(["instrument_id", "instrument_name", "asset_class"])["market_value_usd"].sum().reset_index()
+
         # Calculate changes per holding
-        for _, h2 in h_to.iterrows():
+        for _, h2 in h_to_agg.iterrows():
             inst_id = h2["instrument_id"]
-            pid = h2["portfolio_id"]
-            h1_match = h_from[
-                (h_from["instrument_id"] == inst_id) & (h_from["portfolio_id"] == pid)
-            ]
+            h1_match = h_from_agg[h_from_agg["instrument_id"] == inst_id]
 
             if h1_match.empty:
                 mv_change = h2["market_value_usd"]

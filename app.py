@@ -419,21 +419,36 @@ def render_client_deep_dive():
 
             # Event annotations
             events = data["event_log"]
+            date_events = {}
             for _, evt in events[events["severity"].isin(["Severe", "High"])].iterrows():
                 evt_date = evt["event_date"]
                 closest_snap = min(SNAPSHOT_DATES, key=lambda d: abs(
                     pd.Timestamp(d) - pd.Timestamp(evt_date)
                 ))
-                snap_aum = total_ts[total_ts["snapshot_date"] == closest_snap]
+                if closest_snap not in date_events:
+                    date_events[closest_snap] = []
+                date_events[closest_snap].append(evt["description"])
+
+            for snap_date, descs in date_events.items():
+                snap_aum = total_ts[total_ts["snapshot_date"] == snap_date]
                 if not snap_aum.empty:
+                    short_texts = [f"• {d[:35]}..." for d in descs]
+                    combined_short = "<br>".join(short_texts)
+                    combined_full = "<br><br>".join(descs)
+
                     fig.add_annotation(
-                        x=closest_snap,
+                        x=snap_date,
                         y=snap_aum.iloc[0]["aum"],
-                        text=evt["description"][:50] + "...",
+                        text=combined_short,
+                        hovertext=combined_full,
                         showarrow=True,
                         arrowhead=2,
-                        font=dict(size=9),
-                        bgcolor="rgba(255,255,255,0.8)",
+                        ay=-60,
+                        align="left",
+                        font=dict(size=10, color="black"),
+                        bgcolor="rgba(255,255,255,0.95)",
+                        bordercolor="black",
+                        borderwidth=1,
                     )
 
             fig.update_layout(
@@ -442,6 +457,7 @@ def render_client_deep_dive():
                 xaxis_title="Snapshot Date",
                 yaxis_title=f"AUM ({ts.iloc[0]['base_currency'] if not ts.empty else 'USD'})",
                 hovermode="x unified",
+                hoverlabel=dict(align="left"),
             )
             st.plotly_chart(fig, width="stretch")
 
